@@ -17,26 +17,14 @@
 ## 설치 및 실행 방법
 
 1. 이 프로젝트의 저장소를 클론합니다:
-    
-    bash
-    
-    Copy code
-    
+        
     `git clone https://github.com/yourusername/your-repository.git`
     
 2. 필요한 라이브러리를 설치합니다:
-    
-    bash
-    
-    Copy code
-    
+
     `pip install -r requirements.txt`
     
-3. 스크립트를 실행하여 데이터를 다운로드하고 크롤링합니다:
-    
-    bash
-    
-    Copy code
-    
+4. 스크립트를 실행하여 데이터를 다운로드하고 크롤링합니다:
+
     `python main.py`
 
