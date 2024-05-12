@@ -1,1 +1,18 @@
-.venv
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+
+# IDE settings
+.vscode/
+
+# Data directory
+data/
+
+# Ignore all txt files (if necessary)
+# *.txt
