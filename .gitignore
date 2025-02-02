@@ -16,3 +16,8 @@ data/
 
 # Ignore all txt files (if necessary)
 # *.txt
+
+
+.env
+
+/data/
