@@ -82,7 +82,7 @@ def get_companies_ratings(company_names):
             try:
                 search_name = company_name.replace("주식회사", "").strip()
                 driver.get(f"https://www.jobplanet.co.kr/search?query={search_name}")
-                time.sleep(1)
+                time.sleep(0.5)
 
                 try:
                     company_link_element = WebDriverWait(driver, 3).until(
@@ -96,7 +96,10 @@ def get_companies_ratings(company_names):
                 company_id = company_url.split('/')[-1]
                 
                 driver.execute_script(f"window.location.href='{company_url}'")
-                time.sleep(1)
+                
+                review_url = f"/companies/{company_id}/reviews"
+                driver.execute_script(f"window.location.href='{review_url}'")
+                time.sleep(0.5)
 
                 # 평점 수집
                 try:
@@ -119,7 +122,7 @@ def get_companies_ratings(company_names):
                 # 연봉 정보 수집
                 salary_url = f"/companies/{company_id}/salaries"
                 driver.execute_script(f"window.location.href='{salary_url}'")
-                time.sleep(1)
+                time.sleep(0.5)
                 try:
                     salary_element = WebDriverWait(driver, 3).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, '#mainContents > div.jpcont_wrap.salary_wrap.overflow > div:nth-child(2) > div.salary_chart_wrap > div.chart_header > div:nth-child(1) > div.num > em'))
@@ -131,7 +134,7 @@ def get_companies_ratings(company_names):
                 # 채용 정보 수집
                 job_url = f"/companies/{company_id}/job_postings"
                 driver.execute_script(f"window.location.href='{job_url}'")
-                time.sleep(1)
+                time.sleep(0.5)
 
                 try:
                     hiring_count_element = WebDriverWait(driver, 3).until(
@@ -144,7 +147,8 @@ def get_companies_ratings(company_names):
                 # 백엔드 포지션 찾기
                 backend_position = None
                 backend_keywords = ['백엔드', 'Backend', 'backend', 'software', 'java', '웹', 'web']
-                for i in range(1, int(hiring_count) + 1):
+                try:
+                    for i in range(1, int(hiring_count) + 1):
                         selector = f'#contents > div:nth-child(1) > div > div:nth-child({i}) > a > div > h2'
                         position = WebDriverWait(driver, 3).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
@@ -152,7 +156,10 @@ def get_companies_ratings(company_names):
                         if any(keyword in position for keyword in backend_keywords):
                             backend_position = position
                             break
+                except:
+                    backend_position = None
                         
+
             except Exception as e:
                 rating = "-1"
                 review_count = "0"
