@@ -62,7 +62,9 @@ def read_results_from_file(csv_path):
 
 
 def get_companies_ratings(company_names):
-    driver = webdriver.Chrome()
+    chrome_options = Options()
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.implicitly_wait(3)
 
     if not login_jobplanet(driver):
         driver.quit()
@@ -80,10 +82,12 @@ def get_companies_ratings(company_names):
             try:
                 search_name = company_name.replace("주식회사", "").strip()
                 driver.get(f"https://www.jobplanet.co.kr/search?query={search_name}")
-                time.sleep(0.5)
+                time.sleep(1)
 
                 try:
-                    company_link_element = driver.find_element(By.CSS_SELECTOR, r'body > div.body_wrap > main > div > div > div > div:nth-child(1) > div:nth-child(2) > ul > a:nth-child(1)')
+                    company_link_element = WebDriverWait(driver, 3).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, r'body > div.body_wrap > main > div > div > div > div:nth-child(1) > div:nth-child(2) > ul > a:nth-child(1)'))
+                    )
                 except:
                     print(f"{company_name}: 회사 링크 없음")
                     continue
@@ -91,20 +95,23 @@ def get_companies_ratings(company_names):
                 company_url = company_link_element.get_attribute('href')
                 company_id = company_url.split('/')[-1]
                 
-                # driver.get(company_url)
                 driver.execute_script(f"window.location.href='{company_url}'")
-                time.sleep(0.5)
+                time.sleep(1)
 
                 # 평점 수집
                 try:
-                    rating_element = driver.find_element(By.CSS_SELECTOR, r'#premiumReviewStatistics > div > div.relative > div.relative > div.flex > div.w-\[287px\] > div.rate_star_top > span')
+                    rating_element = WebDriverWait(driver, 3).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, r'#premiumReviewStatistics > div > div.relative > div.relative > div.flex > div.w-\[287px\] > div.rate_star_top > span'))
+                    )
                     rating = rating_element.text
                 except:
                     rating = "-1"
                 
                 # 리뷰 수 수집
                 try:
-                    review_count_element = driver.find_element(By.CSS_SELECTOR, r'#viewReviewsTitle > span')
+                    review_count_element = WebDriverWait(driver, 3).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, r'#viewReviewsTitle > span'))
+                    )
                     review_count = review_count_element.text
                 except:
                     review_count = "0"
@@ -112,9 +119,11 @@ def get_companies_ratings(company_names):
                 # 연봉 정보 수집
                 salary_url = f"/companies/{company_id}/salaries"
                 driver.execute_script(f"window.location.href='{salary_url}'")
-                time.sleep(0.5)
+                time.sleep(1)
                 try:
-                    salary_element = driver.find_element(By.CSS_SELECTOR, r'#mainContents > div.jpcont_wrap.salary_wrap.overflow > div:nth-child(2) > div.salary_chart_wrap > div.chart_header > div:nth-child(1) > div.num > em')
+                    salary_element = WebDriverWait(driver, 3).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '#mainContents > div.jpcont_wrap.salary_wrap.overflow > div:nth-child(2) > div.salary_chart_wrap > div.chart_header > div:nth-child(1) > div.num > em'))
+                    )
                     salary = salary_element.text
                 except:
                     salary = "0"
@@ -122,10 +131,12 @@ def get_companies_ratings(company_names):
                 # 채용 정보 수집
                 job_url = f"/companies/{company_id}/job_postings"
                 driver.execute_script(f"window.location.href='{job_url}'")
-                time.sleep(0.5)
+                time.sleep(1)
 
                 try:
-                    hiring_count_element = driver.find_element(By.CSS_SELECTOR, r'#viewCompaniesMenu > ul > li.companyJob > a > span')
+                    hiring_count_element = WebDriverWait(driver, 3).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, r'#viewCompaniesMenu > ul > li.companyJob > a > span'))
+                    )
                     hiring_count = hiring_count_element.text
                 except:
                     hiring_count = "0"
@@ -134,8 +145,10 @@ def get_companies_ratings(company_names):
                 backend_position = None
                 backend_keywords = ['백엔드', 'Backend', 'backend', 'software', 'java', '웹', 'web']
                 for i in range(1, int(hiring_count) + 1):
-                        selector = f'#contents > div.min-h-[600px] > div > div:nth-child({i}) > a > div > h2'
-                        position = driver.find_element(By.CSS_SELECTOR, selector).text
+                        selector = f'#contents > div:nth-child(1) > div > div:nth-child({i}) > a > div > h2'
+                        position = WebDriverWait(driver, 3).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                        ).text
                         if any(keyword in position for keyword in backend_keywords):
                             backend_position = position
                             break
