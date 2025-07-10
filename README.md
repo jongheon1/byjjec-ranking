@@ -31,15 +31,25 @@
    네이버 지도 API를 사용하기 위해 다음 환경 변수를 설정해야 합니다:
    
    ```bash
+   # Geocoding API (주소 → 좌표 변환)
    export NAVER_MAP_API_KEY_ID=your_api_key_id
    export NAVER_MAP_API_KEY=your_api_key
+   
+   # Maps API (지도 표시)
+   export NAVER_MAPS_API_KEY_ID=your_maps_key_id
+   export NAVER_MAPS_API_KEY=your_maps_key
    ```
    
    또는 `.env` 파일을 프로젝트 루트에 생성하고 다음 내용을 추가합니다:
    
    ```
+   # Geocoding API
    NAVER_MAP_API_KEY_ID=your_api_key_id
    NAVER_MAP_API_KEY=your_api_key
+   
+   # Maps API
+   NAVER_MAPS_API_KEY_ID=your_maps_key_id
+   NAVER_MAPS_API_KEY=your_maps_key
    ```
     
 4. 스크립트를 실행하여 데이터를 다운로드하고 크롤링합니다:

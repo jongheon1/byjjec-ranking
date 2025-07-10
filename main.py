@@ -1,5 +1,7 @@
 import os
 import pandas as pd
+import json
+import numpy as np
 from src.download import download_data
 from src.jobplanet.crawler import JobPlanetCrawler
 from src.wanted.crawler import WantedCrawler
@@ -62,9 +64,9 @@ def main():
                     jp_data = {
                         'rating': jp_details.get('rating', '-1'),
                         'review_count': jp_details.get('review_count', '0'),
-                        'salary': jp_details.get('salary', '0'),
-                        'hiring_count': jp_details.get('hiring_count', '0'),
-                        'backend_position': jp_details.get('backend_position', False),
+                        'salary_jobplanet': jp_details.get('salary', '0'),  # 잡플래닛 연봉
+                        'hiring_count_jobplanet': jp_details.get('hiring_count', '0'),  # 잡플래닛 채용수
+                        'backend_position_jobplanet': jp_details.get('backend_position', False),  # 잡플래닛 백엔드 포지션
                         'address': jp_details.get('address', '')
                     }
                     print(f"잡플래닛 결과: {jp_data}")
@@ -78,11 +80,11 @@ def main():
             if company_url:
                 wanted_details = wanted_crawler.get_company_details(company_url)
                 wanted_data = {
-                    'hiring_count': wanted_details.get('hiring_count', '0'),  # 잡플래닛 것 덮어쓰기
-                    'backend_position': wanted_details.get('backend_position', False),  # 잡플래닛 것 덮어쓰기
+                    'hiring_count_wanted': wanted_details.get('hiring_count', '0'),  # 원티드 채용수
+                    'backend_position_wanted': wanted_details.get('backend_position', False),  # 원티드 백엔드 포지션
                     'founded_year': wanted_details.get('founded_year', ''),
                     'revenue': wanted_details.get('revenue', ''),
-                    'salary': wanted_details.get('salary', ''),
+                    'salary_wanted': wanted_details.get('salary', ''),  # 원티드 연봉
                     'total_employees': wanted_details.get('total_employees', ''),
                     'resignees': wanted_details.get('resignees', ''),
                     'new_hires': wanted_details.get('new_hires', '')
@@ -92,7 +94,10 @@ def main():
                 print("원티드 검색 실패")
             
             # 데이터 통합 및 저장
-            combined_data = {**jp_data, **wanted_data}  # 원티드 데이터가 잡플래닛 데이터를 덮어쓰기
+            combined_data = {**jp_data, **wanted_data}
+            # 백엔드 포지션은 둘 중 하나라도 True면 True
+            combined_data['backend_position'] = combined_data.get('backend_position_jobplanet', False) or combined_data.get('backend_position_wanted', False)
+            
             update_company_data(crawled_result_file, company_name, combined_data)
             print(f"통합 데이터 저장 완료: {combined_data}")
         
@@ -146,8 +151,60 @@ def main():
     print(f"좌표 변환 성공: {companies_with_coords}")
     print(f"좌표 변환 실패: {companies_without_coords}")
 
+    # === JSON 변환 ===
+    print("\n=== JSON 변환 시작 ===")
+    json_output_file = "data/final_company_data.json"
+    
+    try:
+        # NaN 값을 None으로 변환
+        df_with_coords = df_with_coords.replace({np.nan: None})
+        
+        # 데이터를 딕셔너리 리스트로 변환
+        companies_list = []
+        
+        for _, row in df_with_coords.iterrows():
+            company_data = {
+                "company_name": row['company_name'],
+                "rating": row['rating'] if row['rating'] != -1.0 else None,
+                "review_count": int(row['review_count']) if pd.notna(row['review_count']) else 0,
+                "salary_jobplanet": row['salary_jobplanet'] if pd.notna(row['salary_jobplanet']) else None,
+                "salary_wanted": row['salary_wanted'] if pd.notna(row['salary_wanted']) else None,
+                "hiring_count_jobplanet": int(row['hiring_count_jobplanet']) if pd.notna(row['hiring_count_jobplanet']) else 0,
+                "hiring_count_wanted": int(row['hiring_count_wanted']) if pd.notna(row['hiring_count_wanted']) else 0,
+                "backend_position": bool(row['backend_position']) if pd.notna(row['backend_position']) else False,
+                "backend_position_jobplanet": bool(row['backend_position_jobplanet']) if pd.notna(row['backend_position_jobplanet']) else False,
+                "backend_position_wanted": bool(row['backend_position_wanted']) if pd.notna(row['backend_position_wanted']) else False,
+                "founded_year": row['founded_year'] if pd.notna(row['founded_year']) else None,
+                "revenue": row['revenue'] if pd.notna(row['revenue']) else None,
+                "total_employees": float(row['total_employees']) if pd.notna(row['total_employees']) else None,
+                "resignees": float(row['resignees']) if pd.notna(row['resignees']) else None,
+                "new_hires": float(row['new_hires']) if pd.notna(row['new_hires']) else None,
+                "address": row['address'] if pd.notna(row['address']) else None,
+                "selection_year": int(row['선정년도']) if pd.notna(row['선정년도']) else None,
+                "supplementary_service_personnel": int(row['보충역 복무인원']) if pd.notna(row['보충역 복무인원']) else 0,
+                "coordinates": {
+                    "x": float(row['x']) if pd.notna(row['x']) else None,
+                    "y": float(row['y']) if pd.notna(row['y']) else None
+                } if pd.notna(row['x']) and pd.notna(row['y']) else None
+            }
+            
+            companies_list.append(company_data)
+        
+        # JSON 파일로 저장
+        with open(json_output_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                "total_count": len(companies_list),
+                "companies": companies_list
+            }, f, ensure_ascii=False, indent=2)
+        
+        print(f"성공적으로 JSON 파일을 생성했습니다: {json_output_file}")
+        
+    except Exception as e:
+        print(f"JSON 변환 중 오류 발생: {e}")
+
     print(f"\n=== 모든 작업이 완료되었습니다! ===")
-    print(f"최종 결과 파일: {final_with_coords_file}")
+    print(f"최종 CSV 파일: {final_with_coords_file}")
+    print(f"최종 JSON 파일: {json_output_file}")
 
 if __name__ == "__main__":
     main()

@@ -24,8 +24,11 @@ def create_csv_if_not_exists(csv_file_path):
         with open(csv_file_path, 'w', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
             header = [
-                'company_name', 'rating', 'review_count', 'salary', 
-                'hiring_count', 'backend_position', 'founded_year', 'revenue',
+                'company_name', 'rating', 'review_count', 
+                'salary_jobplanet', 'salary_wanted',  # 연봉 구분
+                'hiring_count_jobplanet', 'hiring_count_wanted',  # 채용수 구분
+                'backend_position', 'backend_position_jobplanet', 'backend_position_wanted',  # 백엔드 포지션 구분
+                'founded_year', 'revenue',
                 'total_employees', 'resignees', 'new_hires', 'address'
             ]
             writer.writerow(header)
@@ -50,9 +53,13 @@ def update_company_data(csv_file_path, company_name, data):
             'company_name': company_name,
             'rating': '-1',
             'review_count': '0',
-            'salary': '0',
-            'hiring_count': '0',
+            'salary_jobplanet': '0',
+            'salary_wanted': '',
+            'hiring_count_jobplanet': '0',
+            'hiring_count_wanted': '0',
             'backend_position': False,
+            'backend_position_jobplanet': False,
+            'backend_position_wanted': False,
             'founded_year': '',
             'revenue': '',
             'total_employees': '',
@@ -95,7 +102,8 @@ def get_processed_companies(csv_file_path):
             company_name = row['company_name']
             # 기본값이 아닌 데이터가 하나라도 있으면 처리된 것으로 간주
             if (row['rating'] != '-1' or row['review_count'] != '0' or 
-                row['hiring_count'] != '0' or row['founded_year'] != '' or row.get('address', '') != ''):
+                row.get('hiring_count_jobplanet', '0') != '0' or row.get('hiring_count_wanted', '0') != '0' or
+                row['founded_year'] != '' or row.get('address', '') != ''):
                 processed.add(company_name)
         
         return processed
