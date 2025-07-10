@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>병역지정업체 지도</title>
+    <script type="text/javascript" src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=10iu131kib"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        #sidebar {
+            width: 300px;
+            background: #f0f0f0;
+            border-right: 1px solid #000;
+            overflow-y: scroll;
+        }
+        
+        #map {
+            flex: 1;
+        }
+        
+        .section {
+            border-bottom: 1px solid #000;
+            padding: 10px;
+        }
+        
+        .section h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
+        
+        .filter {
+            margin: 5px 0;
+        }
+        
+        .company {
+            padding: 5px;
+            border-bottom: 1px dotted #666;
+            cursor: pointer;
+        }
+        
+        .company:hover {
+            background: #ddd;
+        }
+        
+        .company-name {
+            font-weight: bold;
+        }
+        
+        .info {
+            font-size: 11px;
+            color: #333;
+        }
+        
+        input[type="range"] {
+            width: 150px;
+        }
+        
+        select {
+            width: 150px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <div class="section">
+                <h3>필터</h3>
+                <div class="filter">
+                    평점: <span id="ratingValue">0</span>+<br>
+                    <input type="range" id="ratingFilter" min="0" max="5" step="0.1" value="0">
+                </div>
+                <div class="filter">
+                    리뷰: <span id="reviewValue">0</span>+<br>
+                    <input type="range" id="reviewFilter" min="0" max="500" step="10" value="0">
+                </div>
+                <div class="filter">
+                    연봉: <span id="salaryValue">0</span>만+<br>
+                    <input type="range" id="salaryFilter" min="0" max="10000" step="100" value="0">
+                </div>
+                <div class="filter">
+                    <input type="checkbox" id="backendFilter"> 백엔드만
+                </div>
+                <div class="filter">
+                    <input type="checkbox" id="coordsFilter" checked> 위치있는것만
+                </div>
+                <div class="filter">
+                    년도: <select id="yearFilter"><option value="">전체</option></select>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div id="stats">결과: 0개</div>
+            </div>
+            
+            <div id="company-list"></div>
+        </div>
+        <div id="map"></div>
+    </div>
+
+    <script>
+        let map, markers = [], companies = [], infoWindow;
+
+        async function init() {
+            // 데이터 로드
+            try {
+                const res = await fetch('data/final_company_data.json');
+                const data = await res.json();
+                companies = data.companies;
+            } catch (e) {
+                try {
+                    const res = await fetch('data/final_company_data_old.json');
+                    const data = await res.json();
+                    companies = data.companies;
+                } catch (e2) {
+                    alert('데이터 로드 실패');
+                    return;
+                }
+            }
+            
+            // 지도 초기화
+            map = new naver.maps.Map('map', {
+                center: new naver.maps.LatLng(37.5665, 126.9780),
+                zoom: 11
+            });
+            
+            infoWindow = new naver.maps.InfoWindow();
+            
+            // 년도 옵션
+            const years = [...new Set(companies.map(c => c.selection_year).filter(y => y))].sort((a, b) => b - a);
+            const yearSelect = document.getElementById('yearFilter');
+            years.forEach(year => {
+                const opt = document.createElement('option');
+                opt.value = year;
+                opt.textContent = year;
+                yearSelect.appendChild(opt);
+            });
+            
+            // 이벤트
+            ['ratingFilter', 'reviewFilter', 'salaryFilter'].forEach(id => {
+                document.getElementById(id).addEventListener('input', update);
+            });
+            ['backendFilter', 'coordsFilter', 'yearFilter'].forEach(id => {
+                document.getElementById(id).addEventListener('change', update);
+            });
+            
+            update();
+        }
+
+        function update() {
+            // 필터값 표시
+            document.getElementById('ratingValue').textContent = document.getElementById('ratingFilter').value;
+            document.getElementById('reviewValue').textContent = document.getElementById('reviewFilter').value;
+            document.getElementById('salaryValue').textContent = document.getElementById('salaryFilter').value;
+            
+            // 필터링
+            const filters = {
+                rating: parseFloat(document.getElementById('ratingFilter').value),
+                reviews: parseInt(document.getElementById('reviewFilter').value),
+                salary: parseInt(document.getElementById('salaryFilter').value),
+                backend: document.getElementById('backendFilter').checked,
+                coords: document.getElementById('coordsFilter').checked,
+                year: document.getElementById('yearFilter').value
+            };
+            
+            const filtered = companies.filter(c => {
+                if (c.rating && c.rating < filters.rating) return false;
+                if (c.review_count < filters.reviews) return false;
+                
+                const salary = parseInt((c.salary_jobplanet || c.salary || '0').toString().replace(/,/g, '')) || 0;
+                if (salary < filters.salary) return false;
+                
+                if (filters.backend && !c.backend_position) return false;
+                if (filters.coords && !c.coordinates) return false;
+                if (filters.year && c.selection_year != filters.year) return false;
+                
+                return true;
+            });
+            
+            // 통계
+            document.getElementById('stats').textContent = `결과: ${filtered.length}개 (지도: ${filtered.filter(c => c.coordinates).length}개)`;
+            
+            // 리스트
+            const list = document.getElementById('company-list');
+            list.innerHTML = '';
+            
+            filtered.forEach(c => {
+                const div = document.createElement('div');
+                div.className = 'company';
+                
+                const salary = c.salary_jobplanet || c.salary_wanted || c.salary || '-';
+                const hiring = (c.hiring_count_jobplanet || 0) + (c.hiring_count_wanted || 0) || c.hiring_count || 0;
+                
+                div.innerHTML = `
+                    <div class="company-name">${c.company_name}</div>
+                    <div class="info">
+                        평점: ${c.rating || '-'} | 리뷰: ${c.review_count} | 
+                        연봉: ${salary}${salary !== '-' ? '만' : ''} | 
+                        백엔드: ${c.backend_position ? 'O' : 'X'} | 
+                        채용: ${hiring}건 | 
+                        ${c.selection_year}년
+                    </div>
+                `;
+                
+                div.onclick = () => {
+                    if (c.coordinates) {
+                        const marker = markers.find(m => m.company.company_name === c.company_name);
+                        if (marker) {
+                            map.setCenter(new naver.maps.LatLng(c.coordinates.y, c.coordinates.x));
+                            map.setZoom(15);
+                            showInfo(marker.marker, c);
+                        }
+                    }
+                };
+                
+                list.appendChild(div);
+            });
+            
+            // 마커
+            markers.forEach(m => m.marker.setMap(null));
+            markers = [];
+            
+            filtered.forEach(c => {
+                if (c.coordinates) {
+                    const marker = new naver.maps.Marker({
+                        position: new naver.maps.LatLng(c.coordinates.y, c.coordinates.x),
+                        map: map
+                    });
+                    
+                    naver.maps.Event.addListener(marker, 'click', () => showInfo(marker, c));
+                    markers.push({ marker, company: c });
+                }
+            });
+        }
+
+        function showInfo(marker, c) {
+            const salary = c.salary_jobplanet || c.salary_wanted || c.salary || '-';
+            const hiring = (c.hiring_count_jobplanet || 0) + (c.hiring_count_wanted || 0) || c.hiring_count || 0;
+            
+            const content = `
+                <div style="padding:10px;font-family:monospace;font-size:12px;">
+                    <b>${c.company_name}</b><br>
+                    평점: ${c.rating || '-'} (리뷰 ${c.review_count}개)<br>
+                    연봉: ${salary}${salary !== '-' ? '만원' : ''}<br>
+                    채용: ${hiring}건<br>
+                    백엔드: ${c.backend_position ? '있음' : '없음'}<br>
+                    주소: ${c.address || '-'}<br>
+                    선정: ${c.selection_year}년
+                </div>
+            `;
+            
+            infoWindow.setContent(content);
+            infoWindow.open(map, marker);
+        }
+
+        init();
+    </script>
+</body>
+</html> 
