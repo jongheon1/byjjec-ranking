@@ -1,70 +1,40 @@
-## 프로젝트 개요
+# 병역지정업체 랭킹
 
-본 프로젝트는 병역 지정 업체의 리스트를 다운로드하고, 각 업체의 평점, 리뷰 수, 채용 공고 수를 잡플래닛에서 크롤링하여 엑셀 형식으로 요약하는 시스템입니다.
+병역지정업체 정보를 크롤링하고 지도에 표시하는 프로젝트
 
-## 기능
+## 설치
 
-- **데이터 다운로드**: 고용노동부 웹사이트에서 병역 지정 업체 리스트를 자동으로 다운로드합니다.
-- **정보 크롤링**: 잡플래닛과 원티드에서 각 업체의 평점, 리뷰 수, 채용 공고 수 등을 크롤링합니다.
-- **주소 좌표 변환**: 네이버 지도 API를 사용하여 회사 주소를 좌표로 변환합니다.
-- **데이터 처리 및 저장**: 크롤링된 데이터를 분석하고, CSV 파일로 요약하여 저장합니다.
+```bash
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-## 사용 기술
+## 환경변수
 
-- **Python**: 프로그래밍 언어
-- **Pandas**: 데이터 처리
-- **Selenium**: 웹 크롤링
-- **Naver Maps API**: 주소 좌표 변환
+`.env` 파일 생성:
+```
+NAVER_MAP_API_KEY_ID=your_key_id
+NAVER_MAP_API_KEY=your_key
+```
 
-## 설치 및 실행 방법
+## 실행
 
-1. 이 프로젝트의 저장소를 클론합니다:
-        
-    `git clone https://github.com/yourusername/your-repository.git`
-    
-2. 필요한 라이브러리를 설치합니다:
+```bash
+# 데이터 수집 및 처리
+python main.py
 
-    `pip install -r requirements.txt`
+# 웹 서버 실행 (포트 8080)
+python serve.py
+```
 
-3. 환경 변수 설정:
-   
-   네이버 지도 API를 사용하기 위해 다음 환경 변수를 설정해야 합니다:
-   
-   ```bash
-   # Geocoding API (주소 → 좌표 변환)
-   export NAVER_MAP_API_KEY_ID=your_api_key_id
-   export NAVER_MAP_API_KEY=your_api_key
-   
-   # Maps API (지도 표시)
-   export NAVER_MAPS_API_KEY_ID=your_maps_key_id
-   export NAVER_MAPS_API_KEY=your_maps_key
-   ```
-   
-   또는 `.env` 파일을 프로젝트 루트에 생성하고 다음 내용을 추가합니다:
-   
-   ```
-   # Geocoding API
-   NAVER_MAP_API_KEY_ID=your_api_key_id
-   NAVER_MAP_API_KEY=your_api_key
-   
-   # Maps API
-   NAVER_MAPS_API_KEY_ID=your_maps_key_id
-   NAVER_MAPS_API_KEY=your_maps_key
-   ```
-    
-4. 스크립트를 실행하여 데이터를 다운로드하고 크롤링합니다:
+브라우저에서 http://localhost:8080 접속
 
-    `python main.py`
+## 구조
 
-## 결과 예시
-| (주)비바리퍼블리카 | 3.6 | 305 | 0  | 강남구 | 2015 |
-
-| (주)에이아이트릭스 | 3.6 | 25  | 16 | 강남구 | 2019 |
-
-| (주)이지식스    | 3.6 | 11  | 5  | 강남구 | 2017 |
-
-| (주)팀오투     | 3.6 | 17  | 0  | 강남구 | 2020 |
-
-| (주)퍼블리     | 3.6 | 305 | 0  | 강남구 | 2022 |
-
-| 데브시스터즈(주)  | 3.6 | 206 | 3  | 강남구 | 2011 |
+- `main.py` - 메인 실행 파일
+- `src/jobplanet/` - 잡플래닛 크롤러
+- `src/wanted/` - 원티드 크롤러  
+- `src/geocoding.py` - 주소→좌표 변환
+- `map.html` - 지도 UI
+- `data/` - 수집된 데이터
