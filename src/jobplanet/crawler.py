@@ -1,251 +1,370 @@
+"""잡플래닛 크롤러 모듈"""
+import time
+import re
+from typing import Optional
 from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from dotenv import load_dotenv
-import os
-import time
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-load_dotenv()
+from src.config import (
+    JOBPLANET_EMAIL,
+    JOBPLANET_PASSWORD,
+    JOBPLANET_RATE_LIMIT,
+    MAX_RETRIES,
+    RETRY_BACKOFF,
+)
+from src.models import JobplanetData
+from src.pipeline.progress import ProgressTracker
+from src.utils import normalize_company_name, is_good_match
 
-class JobPlanetCrawler:
-    def __init__(self, headless=True):
-        chrome_options = Options()
-        if headless:
-            chrome_options.add_argument("--headless")
-        self.driver = webdriver.Chrome(options=chrome_options)
-        self.driver.implicitly_wait(3)  # 기본 대기 시간을 3초로 단축
-        self.wait = WebDriverWait(self.driver, 5)  # 명시적 대기 시간을 5초로 단축
-        self.short_wait = WebDriverWait(self.driver, 0.1)  # 짧은 대기용
 
-    def close(self):
-        self.driver.quit()
+class JobplanetCrawler:
+    """잡플래닛 크롤러"""
 
-    def login(self):
-        try:
-            self.driver.get("https://www.jobplanet.co.kr/users/sign_in?_nav=gb")
-            
-            email_input = self.wait.until(EC.presence_of_element_located((By.ID, "user_email")))
-            password_input = self.wait.until(EC.presence_of_element_located((By.ID, "user_password")))
-            
-            email_input.send_keys(os.getenv('JOBPLANET_EMAIL'))
-            password_input.send_keys(os.getenv('JOBPLANET_PASSWORD'))
-            
-            login_button = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn_sign_up")))
-            login_button.click()
-            
-            
-            # 로그인 실패 시 나타나는 에러 메시지 확인
-            try:
-                error_element = self.driver.find_element(By.CSS_SELECTOR, "div.flash_ty1.flash-on")
-                print(f"로그인 실패: {error_element.text}")
-                return False
-            except:
-                # 에러 메시지가 없으면 성공으로 간주
-                pass
-            
-            # 현재 URL 확인
-            current_url = self.driver.current_url
-            print(f"로그인 후 현재 URL: {current_url}")
-            
-            # 로그인 성공 시 URL이 변경되거나 특정 요소가 나타나는지 확인
-            if "sign_in" not in current_url:
-                print("로그인 성공!")
-                return True
-            else:
-                print("로그인 실패: 로그인 페이지에서 벗어나지 못했습니다.")
-                return False
-                
-        except Exception as e:
-            print(f"로그인 실패: {e}")
+    BASE_URL = "https://www.jobplanet.co.kr"
+    LOGIN_URL = "https://www.jobplanet.co.kr/users/sign_in"
+    SEARCH_URL = "https://www.jobplanet.co.kr/search?query="  # 통합 검색 URL
+
+    def __init__(self, headless: bool = True):
+        self.driver = None
+        self.headless = headless
+        self.logged_in = False
+        self.progress = ProgressTracker("jobplanet")
+
+    def _init_driver(self):
+        """웹드라이버 초기화"""
+        if self.driver:
+            return
+
+        options = Options()
+        if self.headless:
+            options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver.implicitly_wait(5)
+
+    def login(self) -> bool:
+        """잡플래닛 로그인"""
+        if not JOBPLANET_EMAIL or not JOBPLANET_PASSWORD:
+            print("[에러] 잡플래닛 계정 정보가 설정되지 않았습니다.")
+            print("  .env 파일에 JOBPLANET_EMAIL, JOBPLANET_PASSWORD를 설정하세요.")
             return False
 
-    def search_company(self, company_name):
-        try:
-            # '(주)'나 '주식회사' 같은 단어는 검색의 정확도를 떨어뜨릴 수 있어 제거합니다.
-            search_name = company_name.replace("(주)", "").replace("주식회사", "").strip()
-            self.driver.get(f"https://www.jobplanet.co.kr/search?query={search_name}")
-            
-            # 검색 결과 영역에서 회사 상세 페이지로 가는 첫 번째 링크 요소를 찾습니다.
-            company_link_element = self.short_wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#contentsWrap ul a[href*='/companies/']"))
-            )
+        self._init_driver()
 
-            # 클릭하는 대신, href 속성 값을 직접 추출하여 URL을 반환합니다.
-            # 이 방식이 더 빠르고 안정적입니다.
-            company_url = company_link_element.get_attribute('href')
-            return company_url
-            
+        try:
+            print("잡플래닛 로그인 중...")
+            self.driver.get(self.LOGIN_URL)
+            time.sleep(3)
+
+            # 이메일 입력 필드 찾기 및 클릭하여 포커스
+            email_input = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "user_email"))
+            )
+            email_input.click()
+            time.sleep(0.5)
+            email_input.clear()
+            email_input.send_keys(JOBPLANET_EMAIL)
+            time.sleep(0.5)
+
+            # 비밀번호 입력
+            password_input = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "user_password"))
+            )
+            password_input.click()
+            time.sleep(0.5)
+            password_input.clear()
+            password_input.send_keys(JOBPLANET_PASSWORD)
+            time.sleep(0.5)
+
+            # 로그인 버튼 찾기 및 클릭 (btn_sign_up 클래스)
+            login_btn = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn_sign_up"))
+            )
+            # 스크롤하여 버튼이 보이도록
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", login_btn)
+            time.sleep(0.5)
+            login_btn.click()
+
+            # 로그인 성공 확인
+            time.sleep(4)
+
+            # URL 변경 확인 (로그인 성공 시 리다이렉트)
+            if "sign_in" not in self.driver.current_url:
+                self.logged_in = True
+                print("[완료] 잡플래닛 로그인 성공")
+                return True
+
+            # 로그인 실패 메시지 확인
+            try:
+                error = self.driver.find_element(By.CSS_SELECTOR, ".error_message, .alert")
+                if error.is_displayed():
+                    print(f"[에러] 로그인 실패: {error.text}")
+                    return False
+            except NoSuchElementException:
+                pass
+
+            # URL이 변경되지 않았으면 실패로 간주
+            print("[에러] 로그인 실패: URL이 변경되지 않음")
+            return False
+
         except Exception as e:
-            print(f"'{company_name}' 회사 검색 실패 또는 페이지 이동 실패")
+            print(f"[에러] 로그인 실패: {e}")
+            return False
+
+    def get_company_by_url(self, url: str) -> Optional[JobplanetData]:
+        """이미 알고 있는 URL로 회사 정보 조회"""
+        if not self.driver:
+            self._init_driver()
+
+        try:
+            time.sleep(JOBPLANET_RATE_LIMIT)
+            self.driver.get(url)
+            time.sleep(2)
+            return self._extract_company_data(url)
+        except Exception as e:
+            print(f"  URL 직접 조회 실패: {e}")
+        return None
+
+    def search_company(self, company_name: str) -> Optional[JobplanetData]:
+        """회사명으로 검색하여 정보 수집 (다양한 검색어 시도)"""
+        if not self.driver:
+            self._init_driver()
+
+        normalized = normalize_company_name(company_name)
+        search_variants = normalized['search_variants']
+
+        for search_query in search_variants:
+            for attempt in range(MAX_RETRIES):
+                try:
+                    # Rate limit
+                    time.sleep(JOBPLANET_RATE_LIMIT)
+
+                    # 검색 (기업 검색 페이지로 바로 이동)
+                    search_url = f"{self.SEARCH_URL}{search_query}"
+                    self.driver.get(search_url)
+                    time.sleep(2)
+
+                    # 검색 결과에서 회사 링크 찾기 (/companies/숫자 URL 패턴)
+                    company_url = None
+                    try:
+                        # 모든 링크에서 회사 페이지 URL 찾기
+                        links = self.driver.find_elements(By.TAG_NAME, "a")
+                        candidates = []
+                        for link in links:
+                            href = link.get_attribute("href") or ""
+                            text = link.text.strip() if link.text else ""
+                            # /companies/숫자 패턴 (cover 등 제외)
+                            if re.search(r"/companies/\d+", href) and text:
+                                candidates.append((text, href))
+
+                        if not candidates:
+                            continue  # 다음 검색어 시도
+
+                        # 회사명과 가장 유사한 결과 선택
+                        for text, href in candidates:
+                            if is_good_match(company_name, text):
+                                company_url = href
+                                break
+
+                        # 검색어가 결과에 포함된 경우
+                        if not company_url:
+                            for text, href in candidates:
+                                clean_text = normalize_company_name(text)['korean']
+                                if search_query.lower() in clean_text.lower():
+                                    company_url = href
+                                    break
+
+                        # 매칭 실패해도 검색 결과가 3개 이하면 첫 번째 사용
+                        if not company_url and len(candidates) <= 3:
+                            company_url = candidates[0][1]
+                            print(f"    (검색 결과 {len(candidates)}개, 첫 번째 사용)")
+
+                        if not company_url:
+                            continue  # 다음 검색어 시도
+
+                        # 회사 페이지로 이동
+                        self.driver.get(company_url)
+                        time.sleep(2)
+
+                    except Exception:
+                        continue
+
+                    # 회사 정보 페이지에서 데이터 추출
+                    return self._extract_company_data(company_url)
+
+                except Exception as e:
+                    print(f"  [재시도 {attempt + 1}/{MAX_RETRIES}] {search_query}: {e}")
+                    time.sleep(RETRY_BACKOFF ** (attempt + 1))
+
+        return None
+
+    def _extract_company_data(self, company_url: str) -> Optional[JobplanetData]:
+        """회사 상세 페이지에서 데이터 추출"""
+        try:
+            data = JobplanetData(url=self.driver.current_url)
+
+            # 평점 추출 (.rate_point 클래스)
+            try:
+                rating_elem = self.driver.find_element(By.CSS_SELECTOR, ".rate_point")
+                rating_text = rating_elem.text.strip()
+                rating_match = re.search(r"(\d+\.?\d*)", rating_text)
+                if rating_match:
+                    data.rating = float(rating_match.group(1))
+            except NoSuchElementException:
+                pass
+
+            # 리뷰 수 추출 (타이틀에서: "회사명 | 기업리뷰 328건, 평점")
+            try:
+                title = self.driver.title
+                review_match = re.search(r"(\d+)건", title)
+                if review_match:
+                    data.reviewCount = int(review_match.group(1))
+            except:
+                pass
+
+            # 주소 추출 시도
+            try:
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text
+                # 주소 패턴: "서울", "경기", "부산" 등으로 시작하는 주소
+                addr_patterns = [
+                    r'(서울[^\n,]{10,50})',
+                    r'(경기[^\n,]{10,50})',
+                    r'(부산[^\n,]{10,50})',
+                    r'(인천[^\n,]{10,50})',
+                    r'(대구[^\n,]{10,50})',
+                    r'(대전[^\n,]{10,50})',
+                    r'(광주[^\n,]{10,50})',
+                    r'(울산[^\n,]{10,50})',
+                    r'(세종[^\n,]{10,50})',
+                    r'(강원[^\n,]{10,50})',
+                    r'(충북[^\n,]{10,50})',
+                    r'(충남[^\n,]{10,50})',
+                    r'(전북[^\n,]{10,50})',
+                    r'(전남[^\n,]{10,50})',
+                    r'(경북[^\n,]{10,50})',
+                    r'(경남[^\n,]{10,50})',
+                    r'(제주[^\n,]{10,50})',
+                ]
+                for pattern in addr_patterns:
+                    addr_match = re.search(pattern, page_text)
+                    if addr_match:
+                        addr = addr_match.group(1).strip()
+                        # 주소로 보이는지 추가 검증 (구, 동, 로, 길 포함)
+                        if re.search(r'(구|동|로|길|읍|면)', addr):
+                            data.address = addr
+                            break
+            except:
+                pass
+
+            # 평균 연봉 추출 (연봉 탭으로 이동)
+            try:
+                # 연봉 탭 URL 찾기
+                salary_url = None
+                links = self.driver.find_elements(By.TAG_NAME, "a")
+                for link in links:
+                    href = link.get_attribute("href") or ""
+                    if "/salaries" in href:
+                        salary_url = href
+                        break
+
+                if salary_url:
+                    self.driver.get(salary_url)
+                    time.sleep(1.5)
+
+                    # 연봉 페이지에서 평균 연봉 추출
+                    page_text = self.driver.find_element(By.TAG_NAME, "body").text
+                    # "평균 연봉 6,961만" 패턴
+                    salary_match = re.search(r"평균[^\d]*(\d[\d,]*)\s*만", page_text)
+                    if salary_match:
+                        data.avgSalary = int(salary_match.group(1).replace(",", ""))
+            except:
+                pass
+
+            return data
+
+        except Exception as e:
+            print(f"  [에러] 데이터 추출 실패: {e}")
             return None
 
-    def get_company_details(self, company_url):
-        # 연봉 페이지와 채용 페이지만 방문하여 필요한 정보를 수집합니다.
-        details = {
-            "rating": "-1", 
-            "review_count": "0", 
-            "salary": "0", 
-            "hiring_count": "0",
-            "backend_position": False,
-            "address": ""
-        }
-        
-        if not company_url:
-            return details
+    def crawl_companies(
+        self, companies: list, limit: Optional[int] = None
+    ) -> dict[str, JobplanetData]:
+        """여러 회사 크롤링"""
+        if not self.login():
+            return {}
 
-        base_url = company_url.rstrip('/')
+        results = {}
+        company_ids = [c.id for c in companies]
+        pending = self.progress.get_pending(company_ids)
 
-        # 1. 연봉 페이지에서 평점, 리뷰 수, 연봉 정보 가져오기
-        try:
-            salaries_url = f"{base_url}/salaries"
-            self.driver.get(salaries_url)
-            
-            # 평점 정보 (companies-info__score 클래스 사용)
+        if limit:
+            pending = pending[:limit]
+
+        total = len(pending)
+        print(f"잡플래닛 크롤링 시작: {total}개 회사")
+
+        for idx, company_id in enumerate(pending, 1):
+            company = next((c for c in companies if c.id == company_id), None)
+            if not company:
+                continue
+
+            print(f"[{idx}/{total}] {company.name}")
+
             try:
-                rating_element = self.short_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".companies-info__score")))
-                details["rating"] = rating_element.text.strip()
-                print(f"평점 정보 수집 성공: {details['rating']}")
-            except:
-                # 대안 selector들
-                for selector in [".score", "[class*='score']", ".rating"]:
-                    try:
-                        rating_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                        details["rating"] = rating_element.text.strip()
-                        print(f"평점 정보 수집 성공 (대안): {details['rating']}")
-                        break
-                    except:
-                        continue
+                data = None
 
-            # 리뷰 수 정보 (메뉴에서 리뷰 탭의 숫자)
-            try:
-                review_element = self.short_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".viewReviews a span")))
-                review_text = review_element.text.strip()
-                import re
-                numbers = re.findall(r'\d+', review_text)
-                if numbers:
-                    details["review_count"] = numbers[0]
-                    print(f"리뷰 수 정보 수집 성공: {details['review_count']}")
-            except:
-                # 대안 selector들
-                for selector in ["a[href*='reviews'] span", ".review span", "[class*='review'] span"]:
-                    try:
-                        review_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                        review_text = review_element.text.strip()
-                        import re
-                        numbers = re.findall(r'\d+', review_text)
-                        if numbers:
-                            details["review_count"] = numbers[0]
-                            print(f"리뷰 수 정보 수집 성공 (대안): {details['review_count']}")
-                            break
-                    except:
-                        continue
+                # 1단계: 이미 URL이 있으면 바로 사용
+                existing_jp = getattr(company, 'jobplanet', None)
+                if existing_jp and hasattr(existing_jp, 'url') and existing_jp.url:
+                    print(f"  기존 URL 사용")
+                    data = self.get_company_by_url(existing_jp.url)
 
-            # 연봉 정보 (메인 연봉 수치)
-            try:
-                # 먼저 연봉 작성 개수 확인
-                salaries_num_element = self.short_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#salariesNum")))
-                salaries_num_text = salaries_num_element.text.strip()
-                import re
-                numbers = re.findall(r'\d+', salaries_num_text)
-                
-                if numbers and int(numbers[0]) > 0:
-                    # 연봉 작성 개수가 0보다 크면 실제 연봉 정보 수집
-                    try:
-                        salary_element = self.short_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".chart_header .num em")))
-                        details["salary"] = salary_element.text.strip()
-                        print(f"연봉 정보 수집 성공: {details['salary']}")
-                    except:
-                        # 대안 selector들
-                        for selector in ["em", ".num em", ".salary em", "[class*='num'] em", ".amount"]:
-                            try:
-                                salary_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                                salary_text = salary_element.text.strip()
-                                if salary_text and "만원" in salary_text:
-                                    details["salary"] = salary_text
-                                    print(f"연봉 정보 수집 성공 (대안): {details['salary']}")
-                                    break
-                            except:
-                                continue
+                # 2단계: URL 없으면 검색
+                if not data:
+                    data = self.search_company(company.name)
+
+                if data:
+                    results[company_id] = data
+                    self.progress.mark_completed(company_id, data.__dict__)
+                    salary_str = f", 연봉: {data.avgSalary}만" if data.avgSalary else ""
+                    print(f"  평점: {data.rating}, 리뷰: {data.reviewCount}{salary_str}")
                 else:
-                    print("연봉 작성 개수가 0개이므로 연봉 정보를 수집하지 않습니다.")
-                    
-            except:
-                print("연봉 작성 개수를 확인할 수 없습니다.")
+                    self.progress.mark_completed(company_id, {})
+                    print("  검색 결과 없음")
 
-        except Exception as e:
-            print(f"연봉 페이지 정보 수집 실패: {e}")
+            except Exception as e:
+                self.progress.mark_failed(company_id, str(e))
+                print(f"  [에러] {e}")
 
-        # 2. 채용 공고 페이지에서 채용 수와 백엔드 포지션 확인
-        try:
-            job_postings_url = f"{base_url}/job_postings"
-            self.driver.get(job_postings_url)
-            
-            # 채용 공고 수 정보
-            try:
-                hiring_element = self.short_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".companyJob a span")))
-                hiring_text = hiring_element.text.strip()
-                import re
-                numbers = re.findall(r'\d+', hiring_text)
-                if numbers:
-                    details["hiring_count"] = numbers[0]
-                    print(f"채용 공고 수 정보 수집 성공: {details['hiring_count']}")
-            except:
-                # 대안 selector들
-                for selector in ["a[href*='job'] span", ".job span", "[class*='job'] span"]:
-                    try:
-                        hiring_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                        hiring_text = hiring_element.text.strip()
-                        import re
-                        numbers = re.findall(r'\d+', hiring_text)
-                        if numbers:
-                            details["hiring_count"] = numbers[0]
-                            print(f"채용 공고 수 정보 수집 성공 (대안): {details['hiring_count']}")
-                            break
-                    except:
-                        continue
+        stats = self.progress.get_stats()
+        print(f"\n잡플래닛 크롤링 완료: 성공 {stats['completed']}, 실패 {stats['failed']}")
 
-            # 백엔드 관련 포지션 찾기 (채용 공고가 있을 때만)
-            if details["hiring_count"] != "0":
-                try:
-                    # 채용 공고 목록에서 직종명들 확인 (짧은 타임아웃)
-                    job_titles = self.driver.find_elements(By.CSS_SELECTOR, "#contents h2, .job-title, [class*='title'] h2")
-                    
-                    backend_keywords = ['백엔드', 'backend', 'server', '서버', 'api', 'java', 'python', 'spring', 'node', 'developer', '개발자', 'engineer', '엔지니어']
-                    
-                    for title_element in job_titles[:5]:  # 최대 5개만 확인하여 속도 향상
-                        try:
-                            title_text = title_element.text.lower()
-                            if any(keyword in title_text for keyword in backend_keywords):
-                                details["backend_position"] = True
-                                print(f"백엔드 관련 포지션 발견: {title_element.text}")
-                                break
-                        except:
-                            continue
-                            
-                except Exception as e:
-                    print(f"백엔드 포지션 확인 실패: {e}")
+        return results
 
-        except Exception as e:
-            print(f"채용 공고 페이지 정보 수집 실패: {e}")
-            
-        # 3. 주소 정보 수집
-        try:
-            landing_url = f"{base_url}/landing"
-            self.driver.get(landing_url)
-            
-            address_selector = "#profile > div > ul > li:nth-child(3) > div > span"
-            address_element = self.short_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, address_selector)))
-            
-            raw_address = address_element.text.strip()
-            if ',' in raw_address:
-                address = raw_address.split(',')[0].strip()
-            else:
-                address = raw_address
-            details['address'] = address
-            print(f"주소 정보 수집 성공: {details['address']}")
-        except Exception as e:
-            print(f"주소 정보 수집 실패: {e}")
-        
-        return details 
+    def close(self):
+        """드라이버 종료"""
+        if self.driver:
+            self.driver.quit()
+            self.driver = None
+            self.logged_in = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()

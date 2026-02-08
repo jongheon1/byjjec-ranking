@@ -1,6 +1,155 @@
+"""유틸리티 함수 모듈"""
 import csv
 import os
+import re
 import pandas as pd
+
+
+# ============================================================
+# 회사명 정규화 함수
+# ============================================================
+
+def normalize_company_name(name: str) -> dict:
+    """
+    회사명을 정규화하여 검색에 적합한 형태로 변환
+
+    Returns:
+        {
+            'original': 원본 이름,
+            'korean': 한글 핵심 이름,
+            'english': 영문명 (있는 경우),
+            'search_variants': 검색에 사용할 변형들
+        }
+    """
+    if not name:
+        return {'original': '', 'korean': '', 'english': None, 'search_variants': []}
+
+    original = name.strip()
+
+    # 1. 영문명 추출 (괄호 안의 영문)
+    english = None
+    eng_match = re.search(r'\(([A-Za-z][A-Za-z0-9\s.,&]+(?:Co\.?,?\s*Ltd\.?|Inc\.?|LLC|Corp\.?)?)\s*\)', name)
+    if eng_match:
+        english = eng_match.group(1).strip()
+        # 영문명에서 법인 형태 제거
+        english = re.sub(r'\s*(Co\.?,?\s*Ltd\.?|Inc\.?|LLC|Corp\.?)\s*$', '', english, flags=re.IGNORECASE).strip()
+
+    # 2. 한글 이름 정규화
+    korean = name
+
+    # 접두어/접미어 제거
+    korean = re.sub(r'^[\(（]?주[\)）]?\s*', '', korean)  # (주), ㈜
+    korean = re.sub(r'^㈜\s*', '', korean)
+    korean = re.sub(r'\s*주식회사\s*', '', korean)
+    korean = re.sub(r'\s*유한회사\s*', '', korean)
+    korean = re.sub(r'\s*유한책임회사\s*', '', korean)
+
+    # 영문 괄호 부분 제거
+    korean = re.sub(r'\s*\([A-Za-z][^)]*\)\s*', '', korean)
+
+    # 끝에 붙은 (주) 제거
+    korean = re.sub(r'\s*[\(（]주[\)）]$', '', korean)
+
+    # 공백 정규화
+    korean = re.sub(r'\s+', ' ', korean).strip()
+
+    # 3. 검색 변형 생성
+    search_variants = []
+
+    # 기본 한글 이름
+    if korean:
+        search_variants.append(korean)
+
+    # 영문명
+    if english:
+        search_variants.append(english)
+
+    # 띄어쓰기 없는 버전
+    no_space = korean.replace(' ', '')
+    if no_space != korean and no_space:
+        search_variants.append(no_space)
+
+    # 특수문자 제거 버전
+    clean = re.sub(r'[&\-.,]', '', korean)
+    if clean != korean and clean:
+        search_variants.append(clean)
+
+    # 중복 제거
+    search_variants = list(dict.fromkeys(search_variants))
+
+    return {
+        'original': original,
+        'korean': korean,
+        'english': english,
+        'search_variants': search_variants
+    }
+
+
+def similarity_score(name1: str, name2: str) -> float:
+    """두 회사명의 유사도 점수 계산 (0.0 ~ 1.0)"""
+    if not name1 or not name2:
+        return 0.0
+
+    # 정규화
+    n1 = normalize_company_name(name1)['korean'].lower()
+    n2 = normalize_company_name(name2)['korean'].lower()
+
+    if not n1 or not n2:
+        return 0.0
+
+    # 완전 일치
+    if n1 == n2:
+        return 1.0
+
+    # 포함 관계
+    if n1 in n2:
+        return len(n1) / len(n2)
+    if n2 in n1:
+        return len(n2) / len(n1)
+
+    # 공통 문자 비율 (간단한 유사도)
+    set1 = set(n1.replace(' ', ''))
+    set2 = set(n2.replace(' ', ''))
+    if not set1 or not set2:
+        return 0.0
+
+    intersection = len(set1 & set2)
+    union = len(set1 | set2)
+
+    return intersection / union if union > 0 else 0.0
+
+
+def is_good_match(search_name: str, result_name: str, threshold: float = 0.6) -> bool:
+    """검색 결과가 좋은 매칭인지 판단"""
+    score = similarity_score(search_name, result_name)
+
+    # 점수 기반 판단
+    if score >= threshold:
+        return True
+
+    # 정규화된 이름 비교
+    s_norm = normalize_company_name(search_name)
+    r_norm = normalize_company_name(result_name)
+
+    # 한글 이름 포함 관계
+    s_korean = s_norm['korean']
+    r_korean = r_norm['korean']
+
+    if s_korean and r_korean:
+        if s_korean in r_korean or r_korean in s_korean:
+            return True
+
+    # 영문명 일치
+    if s_norm['english'] and r_norm['english']:
+        if s_norm['english'].lower() == r_norm['english'].lower():
+            return True
+
+    return False
+
+
+# ============================================================
+# 기존 CSV 유틸리티 함수
+# ============================================================
 
 def get_last_processed_company(csv_file_path):
     """CSV 파일에서 마지막으로 처리된 회사명을 반환합니다."""
