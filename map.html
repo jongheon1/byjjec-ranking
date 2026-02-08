@@ -10,62 +10,97 @@
             font-family: monospace;
             font-size: 12px;
         }
-        
+
         #container {
             display: flex;
             height: 100vh;
         }
-        
+
         #sidebar {
-            width: 300px;
-            background: #f0f0f0;
-            border-right: 1px solid #000;
-            overflow-y: scroll;
+            width: 320px;
+            background: #f5f5f5;
+            border-right: 1px solid #ccc;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
         }
-        
+
         #map {
             flex: 1;
         }
-        
+
         .section {
-            border-bottom: 1px solid #000;
-            padding: 10px;
+            border-bottom: 1px solid #ccc;
+            padding: 12px;
         }
-        
+
         .section h3 {
             margin: 0 0 10px 0;
-            font-size: 14px;
+            font-size: 13px;
         }
-        
+
         .filter {
-            margin: 5px 0;
+            margin: 8px 0;
         }
-        
+
+        .filter label {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        #company-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
         .company {
-            padding: 5px;
-            border-bottom: 1px dotted #666;
+            padding: 8px 12px;
+            border-bottom: 1px solid #ddd;
             cursor: pointer;
         }
-        
+
         .company:hover {
-            background: #ddd;
+            background: #e8e8e8;
         }
-        
+
         .company-name {
             font-weight: bold;
+            margin-bottom: 4px;
         }
-        
+
         .info {
             font-size: 11px;
-            color: #333;
+            color: #555;
+            line-height: 1.5;
         }
-        
+
+        .tag {
+            display: inline-block;
+            padding: 2px 5px;
+            margin: 2px;
+            background: #ddd;
+            border-radius: 3px;
+            font-size: 10px;
+        }
+
+        .tag.hiring { background: #4CAF50; color: white; }
+        .tag.rating { background: #2196F3; color: white; }
+
         input[type="range"] {
-            width: 150px;
+            width: 100%;
         }
-        
+
         select {
-            width: 150px;
+            width: 100%;
+            padding: 4px;
+        }
+
+        .link {
+            color: #1976D2;
+            text-decoration: none;
+        }
+        .link:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
@@ -75,67 +110,95 @@
             <div class="section">
                 <h3>필터</h3>
                 <div class="filter">
-                    평점: <span id="ratingValue">0</span>+<br>
-                    <input type="range" id="ratingFilter" min="0" max="5" step="0.1" value="0">
+                    <label>시/도</label>
+                    <select id="sidoFilter"><option value="">전체</option></select>
                 </div>
                 <div class="filter">
-                    리뷰: <span id="reviewValue">0</span>+<br>
-                    <input type="range" id="reviewFilter" min="0" max="500" step="10" value="0">
+                    <label>시/군/구</label>
+                    <select id="sigunguFilter"><option value="">전체</option></select>
                 </div>
                 <div class="filter">
-                    연봉: <span id="salaryValue">0</span>만+<br>
-                    <input type="range" id="salaryFilter" min="0" max="10000" step="100" value="0">
+                    <label>최소 평점: <span id="ratingValue">0</span></label>
+                    <input type="range" id="ratingFilter" min="0" max="5" step="0.5" value="0">
                 </div>
                 <div class="filter">
-                    <input type="checkbox" id="backendFilter"> 백엔드만
+                    <label>최소 연봉: <span id="salaryValue">0</span>만원</label>
+                    <input type="range" id="salaryFilter" min="0" max="10000" step="500" value="0">
                 </div>
                 <div class="filter">
-                    <input type="checkbox" id="coordsFilter" checked> 위치있는것만
+                    <label><input type="checkbox" id="hiringFilter"> 채용 중인 회사만</label>
                 </div>
                 <div class="filter">
-                    년도: <select id="yearFilter"><option value="">전체</option></select>
+                    <label><input type="checkbox" id="coordsFilter" checked> 지도에 표시 가능한 회사만</label>
+                </div>
+                <div class="filter">
+                    <label>선정년도</label>
+                    <select id="yearFilter"><option value="">전체</option></select>
                 </div>
             </div>
-            
+
             <div class="section">
                 <div id="stats">결과: 0개</div>
+                <div id="lastUpdated" style="font-size:10px;color:#888;"></div>
             </div>
-            
+
             <div id="company-list"></div>
         </div>
         <div id="map"></div>
     </div>
 
     <script>
-        let map, markers = [], companies = [], infoWindow;
+        let map, markers = [], companies = [], infoWindow, lastUpdated;
 
         async function init() {
-            // 데이터 로드
-            try {
-                const res = await fetch('data/final_company_data.json');
-                const data = await res.json();
-                companies = data.companies;
-            } catch (e) {
+            // 데이터 로드 (새 스키마 우선)
+            const files = ['data/companies.json', 'data/final_company_data.json', 'data/final_company_data_old.json'];
+
+            for (const file of files) {
                 try {
-                    const res = await fetch('data/final_company_data_old.json');
-                    const data = await res.json();
-                    companies = data.companies;
-                } catch (e2) {
-                    alert('데이터 로드 실패');
-                    return;
+                    const res = await fetch(file);
+                    if (res.ok) {
+                        const data = await res.json();
+                        companies = data.companies;
+                        lastUpdated = data.lastUpdated;
+                        console.log(`Loaded: ${file} (${companies.length} companies)`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`Failed to load: ${file}`);
                 }
             }
-            
+
+            if (!companies.length) {
+                alert('데이터 로드 실패');
+                return;
+            }
+
+            // 마지막 업데이트 표시
+            if (lastUpdated) {
+                document.getElementById('lastUpdated').textContent = `업데이트: ${new Date(lastUpdated).toLocaleDateString()}`;
+            }
+
             // 지도 초기화
             map = new naver.maps.Map('map', {
                 center: new naver.maps.LatLng(37.5665, 126.9780),
                 zoom: 11
             });
-            
+
             infoWindow = new naver.maps.InfoWindow();
-            
+
+            // 시/도 옵션
+            const sidos = [...new Set(companies.map(c => getSido(c)).filter(Boolean))].sort();
+            const sidoSelect = document.getElementById('sidoFilter');
+            sidos.forEach(sido => {
+                const opt = document.createElement('option');
+                opt.value = sido;
+                opt.textContent = sido;
+                sidoSelect.appendChild(opt);
+            });
+
             // 년도 옵션
-            const years = [...new Set(companies.map(c => c.selection_year).filter(y => y))].sort((a, b) => b - a);
+            const years = [...new Set(companies.map(c => getYear(c)).filter(y => y))].sort((a, b) => b - a);
             const yearSelect = document.getElementById('yearFilter');
             years.forEach(year => {
                 const opt = document.createElement('option');
@@ -143,98 +206,209 @@
                 opt.textContent = year;
                 yearSelect.appendChild(opt);
             });
-            
+
             // 이벤트
-            ['ratingFilter', 'reviewFilter', 'salaryFilter'].forEach(id => {
+            document.getElementById('sidoFilter').addEventListener('change', () => {
+                updateSigunguOptions();
+                update();
+            });
+
+            ['ratingFilter', 'salaryFilter'].forEach(id => {
                 document.getElementById(id).addEventListener('input', update);
             });
-            ['backendFilter', 'coordsFilter', 'yearFilter'].forEach(id => {
+            ['sigunguFilter', 'hiringFilter', 'coordsFilter', 'yearFilter'].forEach(id => {
                 document.getElementById(id).addEventListener('change', update);
             });
-            
+
             update();
+        }
+
+        // 새/구 스키마 호환 함수들
+        function getSido(c) {
+            return c.sido || (c.mma && c.mma.region) || null;
+        }
+
+        function getSigungu(c) {
+            return c.sigungu || null;
+        }
+
+        function getYear(c) {
+            return c.mma?.selectedYear || c.selection_year || null;
+        }
+
+        function getRating(c) {
+            return c.jobplanet?.rating || c.rating || null;
+        }
+
+        function getReviewCount(c) {
+            return c.jobplanet?.reviewCount || c.review_count || 0;
+        }
+
+        function getSalary(c) {
+            // 새 스키마: 숫자
+            if (c.jobplanet?.avgSalary) return c.jobplanet.avgSalary;
+            // 구 스키마: 문자열
+            const salaryStr = c.salary_jobplanet || c.salary_wanted || c.salary || '0';
+            return parseInt(salaryStr.toString().replace(/,/g, '')) || 0;
+        }
+
+        function isHiring(c) {
+            return c.wanted?.isHiring ||
+                   (c.wanted?.jobCount > 0) ||
+                   (c.hiring_count_jobplanet > 0) ||
+                   (c.hiring_count_wanted > 0) ||
+                   (c.hiring_count > 0) ||
+                   false;
+        }
+
+        function getJobCount(c) {
+            return c.wanted?.jobCount ||
+                   ((c.hiring_count_jobplanet || 0) + (c.hiring_count_wanted || 0)) ||
+                   c.hiring_count || 0;
+        }
+
+        function getCoords(c) {
+            if (c.lat && c.lng) return { lat: c.lat, lng: c.lng };
+            if (c.coordinates) return { lat: c.coordinates.y, lng: c.coordinates.x };
+            return null;
+        }
+
+        function getAddress(c) {
+            return c.address || c.mma?.address || null;
+        }
+
+        function getName(c) {
+            return c.name || c.company_name;
+        }
+
+        function getServing(c) {
+            if (c.mma) {
+                return (c.mma.reserveServing || 0) + (c.mma.activeServing || 0);
+            }
+            return c.supplementary_service_personnel || 0;
+        }
+
+        function updateSigunguOptions() {
+            const sido = document.getElementById('sidoFilter').value;
+            const sigunguSelect = document.getElementById('sigunguFilter');
+            sigunguSelect.innerHTML = '<option value="">전체</option>';
+
+            if (!sido) return;
+
+            const sigungus = [...new Set(
+                companies
+                    .filter(c => getSido(c) === sido)
+                    .map(c => getSigungu(c))
+                    .filter(Boolean)
+            )].sort();
+
+            sigungus.forEach(sigungu => {
+                const opt = document.createElement('option');
+                opt.value = sigungu;
+                opt.textContent = sigungu;
+                sigunguSelect.appendChild(opt);
+            });
         }
 
         function update() {
             // 필터값 표시
             document.getElementById('ratingValue').textContent = document.getElementById('ratingFilter').value;
-            document.getElementById('reviewValue').textContent = document.getElementById('reviewFilter').value;
             document.getElementById('salaryValue').textContent = document.getElementById('salaryFilter').value;
-            
+
             // 필터링
             const filters = {
+                sido: document.getElementById('sidoFilter').value,
+                sigungu: document.getElementById('sigunguFilter').value,
                 rating: parseFloat(document.getElementById('ratingFilter').value),
-                reviews: parseInt(document.getElementById('reviewFilter').value),
                 salary: parseInt(document.getElementById('salaryFilter').value),
-                backend: document.getElementById('backendFilter').checked,
+                hiring: document.getElementById('hiringFilter').checked,
                 coords: document.getElementById('coordsFilter').checked,
                 year: document.getElementById('yearFilter').value
             };
-            
+
             const filtered = companies.filter(c => {
-                if (c.rating && c.rating < filters.rating) return false;
-                if (c.review_count < filters.reviews) return false;
-                
-                const salary = parseInt((c.salary_jobplanet || c.salary || '0').toString().replace(/,/g, '')) || 0;
-                if (salary < filters.salary) return false;
-                
-                if (filters.backend && !c.backend_position) return false;
-                if (filters.coords && !c.coordinates) return false;
-                if (filters.year && c.selection_year != filters.year) return false;
-                
+                if (filters.sido && getSido(c) !== filters.sido) return false;
+                if (filters.sigungu && getSigungu(c) !== filters.sigungu) return false;
+
+                const rating = getRating(c);
+                if (filters.rating > 0 && (!rating || rating < filters.rating)) return false;
+
+                const salary = getSalary(c);
+                if (filters.salary > 0 && salary < filters.salary) return false;
+
+                if (filters.hiring && !isHiring(c)) return false;
+                if (filters.coords && !getCoords(c)) return false;
+                if (filters.year && getYear(c) != filters.year) return false;
+
                 return true;
             });
-            
+
             // 통계
-            document.getElementById('stats').textContent = `결과: ${filtered.length}개 (지도: ${filtered.filter(c => c.coordinates).length}개)`;
-            
+            const withCoords = filtered.filter(c => getCoords(c)).length;
+            document.getElementById('stats').textContent = `결과: ${filtered.length}개 (지도: ${withCoords}개)`;
+
             // 리스트
             const list = document.getElementById('company-list');
             list.innerHTML = '';
-            
-            filtered.forEach(c => {
+
+            filtered.slice(0, 200).forEach(c => {
                 const div = document.createElement('div');
                 div.className = 'company';
-                
-                const salary = c.salary_jobplanet || c.salary_wanted || c.salary || '-';
-                const hiring = (c.hiring_count_jobplanet || 0) + (c.hiring_count_wanted || 0) || c.hiring_count || 0;
-                
+
+                const rating = getRating(c);
+                const salary = getSalary(c);
+                const hiring = isHiring(c);
+                const jobCount = getJobCount(c);
+                const serving = getServing(c);
+
+                let tags = '';
+                if (hiring) tags += '<span class="tag hiring">채용중</span>';
+                if (rating >= 3.5) tags += `<span class="tag rating">${rating}</span>`;
+
                 div.innerHTML = `
-                    <div class="company-name">${c.company_name}</div>
+                    <div class="company-name">${getName(c)} ${tags}</div>
                     <div class="info">
-                        평점: ${c.rating || '-'} | 리뷰: ${c.review_count} | 
-                        연봉: ${salary}${salary !== '-' ? '만' : ''} | 
-                        백엔드: ${c.backend_position ? 'O' : 'X'} | 
-                        채용: ${hiring}건 | 
-                        ${c.selection_year}년
+                        ${rating ? `평점 ${rating}` : '평점 -'} |
+                        ${salary ? `연봉 ${salary.toLocaleString()}만` : '연봉 -'} |
+                        채용 ${jobCount}건 |
+                        복무 ${serving}명 |
+                        ${getYear(c) || '-'}년
                     </div>
                 `;
-                
+
                 div.onclick = () => {
-                    if (c.coordinates) {
-                        const marker = markers.find(m => m.company.company_name === c.company_name);
-                        if (marker) {
-                            map.setCenter(new naver.maps.LatLng(c.coordinates.y, c.coordinates.x));
-                            map.setZoom(15);
-                            showInfo(marker.marker, c);
-                        }
+                    const coords = getCoords(c);
+                    if (coords) {
+                        map.setCenter(new naver.maps.LatLng(coords.lat, coords.lng));
+                        map.setZoom(15);
+                        const marker = markers.find(m => getName(m.company) === getName(c));
+                        if (marker) showInfo(marker.marker, c);
                     }
                 };
-                
+
                 list.appendChild(div);
             });
-            
+
+            if (filtered.length > 200) {
+                const more = document.createElement('div');
+                more.className = 'company';
+                more.style.textAlign = 'center';
+                more.textContent = `... 외 ${filtered.length - 200}개`;
+                list.appendChild(more);
+            }
+
             // 마커
             markers.forEach(m => m.marker.setMap(null));
             markers = [];
-            
+
             filtered.forEach(c => {
-                if (c.coordinates) {
+                const coords = getCoords(c);
+                if (coords) {
                     const marker = new naver.maps.Marker({
-                        position: new naver.maps.LatLng(c.coordinates.y, c.coordinates.x),
+                        position: new naver.maps.LatLng(coords.lat, coords.lng),
                         map: map
                     });
-                    
+
                     naver.maps.Event.addListener(marker, 'click', () => showInfo(marker, c));
                     markers.push({ marker, company: c });
                 }
@@ -242,21 +416,44 @@
         }
 
         function showInfo(marker, c) {
-            const salary = c.salary_jobplanet || c.salary_wanted || c.salary || '-';
-            const hiring = (c.hiring_count_jobplanet || 0) + (c.hiring_count_wanted || 0) || c.hiring_count || 0;
-            
+            const rating = getRating(c);
+            const reviewCount = getReviewCount(c);
+            const salary = getSalary(c);
+            const jobCount = getJobCount(c);
+            const address = getAddress(c);
+            const serving = getServing(c);
+            const year = getYear(c);
+
+            let links = '';
+            if (c.jobplanet?.url) {
+                links += `<a class="link" href="${c.jobplanet.url}" target="_blank">잡플래닛</a> `;
+            }
+            if (c.wanted?.url) {
+                links += `<a class="link" href="${c.wanted.url}" target="_blank">원티드</a> `;
+            }
+
+            let jobs = '';
+            if (c.wanted?.jobs?.length) {
+                jobs = '<br><b>채용공고:</b><br>' + c.wanted.jobs.slice(0, 3).map(j =>
+                    `- <a class="link" href="${j.url}" target="_blank">${j.title}</a>`
+                ).join('<br>');
+            }
+
             const content = `
-                <div style="padding:10px;font-family:monospace;font-size:12px;">
-                    <b>${c.company_name}</b><br>
-                    평점: ${c.rating || '-'} (리뷰 ${c.review_count}개)<br>
-                    연봉: ${salary}${salary !== '-' ? '만원' : ''}<br>
-                    채용: ${hiring}건<br>
-                    백엔드: ${c.backend_position ? '있음' : '없음'}<br>
-                    주소: ${c.address || '-'}<br>
-                    선정: ${c.selection_year}년
+                <div style="padding:12px;font-family:monospace;font-size:12px;max-width:300px;">
+                    <b style="font-size:14px;">${getName(c)}</b><br><br>
+                    평점: ${rating || '-'} (리뷰 ${reviewCount}개)<br>
+                    연봉: ${salary ? salary.toLocaleString() + '만원' : '-'}<br>
+                    채용: ${jobCount}건<br>
+                    복무인원: ${serving}명<br>
+                    주소: ${address || '-'}<br>
+                    선정: ${year || '-'}년<br>
+                    <br>
+                    ${links}
+                    ${jobs}
                 </div>
             `;
-            
+
             infoWindow.setContent(content);
             infoWindow.open(map, marker);
         }
@@ -264,4 +461,4 @@
         init();
     </script>
 </body>
-</html> 
+</html>
